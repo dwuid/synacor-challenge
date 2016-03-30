@@ -1,0 +1,8 @@
+[package]
+name = "synacor"
+version = "0.1.0"
+authors = ["dwuid <dwuid@users.noreply.github.com>"]
+
+[dependencies]
+byteorder = "0.5.1"
+nom = "1.2.2"
