@@ -1,10 +1,13 @@
 
 #[macro_use]
 extern crate nom;
+extern crate byteorder;
 
-use std::io::Read;
 use std::mem::transmute;
+use std::io::{Read, Cursor};
 use std::collections::HashMap;
+
+use byteorder::{BigEndian, ReadBytesExt};
 
 use nom::{IResult, ErrorKind};
 use nom::Err::Position;
@@ -45,9 +48,39 @@ impl Default for State {
     }
 }
 
+fn to_u16(bytes: &[u8]) -> Vec<u16> {
+    let mut reader = Cursor::new(bytes);
+    let mut result = Vec::new();
+
+    let mut i = 0;
+
+    loop {
+        match reader.read_u16::<BigEndian>() {
+            Ok(word) => {
+                println!("{} {}", i, word);
+                result.push(word);
+            },
+            _ => panic!("Cannot convert byte-slice.")
+        }
+
+        i += 2;
+    }
+
+    result
+}
+
 impl State {
-    fn new() -> Self {
-        State { ip: Some(0), .. Default::default() }
+    fn new(memory: &[u8]) -> Self {
+        let mut m =  [0u16; (1 << MEMORY_BITS)];
+
+        let words = to_u16(memory);
+        m.clone_from_slice(&words);
+
+        State {
+            ip:     Some(0),
+            memory: m,
+            .. Default::default()
+        }
     }
 
     fn resolve_operand(&self, operand: &Operand) -> Word {
@@ -68,13 +101,12 @@ impl State {
 }
 
 struct Program {
-    instructions: HashMap<usize, Instruction>,
-    state:        State
+    state: State
 }
 
 impl Program {
-    fn new(instructions: HashMap<usize, Instruction>) -> Self {
-        Program { instructions: instructions, state: State::new() }
+    fn new(memory: &[u8]) -> Self {
+        Program { state: State::new(memory) }
     }
 }
 
@@ -468,11 +500,12 @@ fn parse_program(input: &[u8]) -> Option<Vec<Instruction>> {
 
 fn main() {
     let input = include_bytes!("../challenge.bin");
+    let program = Program::new(input);
     /*if let Some(instructions) = parse_program(input) {
         /*for (i, instruction) in instructions.iter().enumerate() {
             println!("{} {:?}", i, instruction);
         }*/
-    }*/
+    }
 
     if let Some(instructions) = parser(input) {
         for (offset, instruction) in &instructions {
@@ -480,7 +513,7 @@ fn main() {
         }
     } else {
         println!("Cannot parse.");
-    }
+    }*/
 }
 
 #[cfg(test)]
