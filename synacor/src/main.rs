@@ -5,9 +5,8 @@ extern crate byteorder;
 
 use std::mem::transmute;
 use std::io::{Read, Cursor};
-use std::collections::HashMap;
 
-use byteorder::{BigEndian, ReadBytesExt};
+use byteorder::{LittleEndian, ReadBytesExt};
 
 use nom::{IResult, ErrorKind};
 use nom::Err::Position;
@@ -52,18 +51,18 @@ fn to_u16(bytes: &[u8]) -> Vec<u16> {
     let mut reader = Cursor::new(bytes);
     let mut result = Vec::new();
 
-    let mut i = 0;
+    let mut i = bytes.len();
+    assert!(bytes.len() & 1 == 0, "Given byte array is of odd length.");
 
-    loop {
-        match reader.read_u16::<BigEndian>() {
+    while i > 0 {
+        match reader.read_u16::<LittleEndian>() {
             Ok(word) => {
-                println!("{} {}", i, word);
                 result.push(word);
             },
             _ => panic!("Cannot convert byte-slice.")
         }
 
-        i += 2;
+        i -= 2;
     }
 
     result
@@ -71,14 +70,14 @@ fn to_u16(bytes: &[u8]) -> Vec<u16> {
 
 impl State {
     fn new(memory: &[u8]) -> Self {
-        let mut m =  [0u16; (1 << MEMORY_BITS)];
-
         let words = to_u16(memory);
-        m.clone_from_slice(&words);
+
+        let mut memory =  [0u16; (1 << MEMORY_BITS)];
+        memory[..words.len()].clone_from_slice(&words);
 
         State {
             ip:     Some(0),
-            memory: m,
+            memory: memory,
             .. Default::default()
         }
     }
@@ -107,6 +106,26 @@ struct Program {
 impl Program {
     fn new(memory: &[u8]) -> Self {
         Program { state: State::new(memory) }
+    }
+
+    fn evaluate(&self) {
+        if self.state.ip.is_none() {
+            return;
+        }
+
+        let ip = self.state.ip.unwrap() as usize;
+        let current: &[u16] = &self.state.memory[ip..];
+        let current: &[u8] = unsafe { std::mem::transmute(current) };
+
+        match instruction(&current) {
+            Done(_, parsed) => {
+                let () = parsed.s;
+                println!("{:?}", parsed);
+                parsed.apply(&mut self.state)
+            },
+
+            _ => panic!("Cannot parse current instruction.")
+        }
     }
 }
 
@@ -357,28 +376,28 @@ impl Semantics for RetSemantics {
 
 #[derive(Debug, PartialEq)]
 pub enum Instruction {
-    Halt(HaltSemantics),
-    Noop(NoopSemantics),
-    Set(SetSemantics),
-    Push(PushSemantics),
-    Pop(PopSemantics),
-    Out(OutSemantics),
-    In(InSemantics),
-    Eq_(EqSemantics),
-    Gt(GtSemantics),
-    Jmp(JmpSemantics),
-    Jt(JtSemantics),
-    Jf(JfSemantics),
-    Add(AddSemantics),
-    Mult(MultSemantics),
-    Mod(ModSemantics),
-    And(AndSemantics),
-    Or(OrSemantics),
-    Not(NotSemantics),
-    Rmem(RmemSemantics),
-    Wmem(WmemSemantics),
-    Call(CallSemantics),
-    Ret(RetSemantics),
+    Halt { s: HaltSemantics },
+    Noop { s: NoopSemantics },
+    Set { s: SetSemantics },
+    Push { s: PushSemantics },
+    Pop { s: PopSemantics },
+    Out { s: OutSemantics },
+    In { s: InSemantics },
+    Eq_ { s: EqSemantics },
+    Gt { s: GtSemantics },
+    Jmp { s: JmpSemantics },
+    Jt { s: JtSemantics },
+    Jf { s: JfSemantics },
+    Add { s: AddSemantics },
+    Mult { s: MultSemantics },
+    Mod { s: ModSemantics },
+    And { s: AndSemantics },
+    Or { s: OrSemantics },
+    Not { s: NotSemantics },
+    Rmem { s: RmemSemantics },
+    Wmem { s: WmemSemantics },
+    Call { s: CallSemantics },
+    Ret { s: RetSemantics },
 }
 
 named!(token<Word>, u16!(false));
@@ -410,21 +429,21 @@ pub fn operand(input: &[u8]) -> IResult<&[u8], Operand> {
 macro_rules! instruction_0(
     ($i: expr, $opcode: expr, $instruction: ident, $semantics: ident) => {
         chain!($i, apply!(opcode, $opcode), ||
-            Instruction::$instruction($semantics))
+            Instruction::$instruction { s: $semantics })
     }
 );
 
 macro_rules! instruction_1(
     ($i: expr, $opcode: expr, $instruction: ident, $semantics: ident) => {
         chain!($i, apply!(opcode, $opcode) ~ a: operand, ||
-            Instruction::$instruction($semantics { a: a }))
+            Instruction::$instruction { s: $semantics { a: a } })
     }
 );
 
 macro_rules! instruction_2(
     ($i: expr, $opcode: expr, $instruction: ident, $semantics: ident) => {
         chain!($i, apply!(opcode, $opcode) ~ a: operand ~ b: operand, ||
-            Instruction::$instruction($semantics { a: a, b: b }))
+            Instruction::$instruction { s: $semantics { a: a, b: b } })
     }
 );
 
@@ -432,7 +451,7 @@ macro_rules! instruction_3(
     ($i: expr, $opcode: expr, $instruction: ident, $semantics: ident) => {
         chain!($i, apply!(opcode, $opcode) ~ a: operand ~ b: operand ~
             c: operand,
-            || Instruction::$instruction($semantics { a: a, b: b, c: c }))
+            || Instruction::$instruction { s: $semantics { a: a, b: b, c: c } })
     }
 );
 
@@ -463,7 +482,7 @@ named!(pub instruction<Instruction>, alt!(
 
 named!(pub program_parser<Vec<Instruction> >, many0!(instruction));
 
-fn parser(input: &[u8]) -> Option<HashMap<usize, Instruction> > {
+/*fn parser(input: &[u8]) -> Option<HashMap<usize, Instruction> > {
     let mut result = HashMap::new();
     let mut cursor = input;
     let mut offset = 0;
@@ -496,11 +515,14 @@ fn parse_program(input: &[u8]) -> Option<Vec<Instruction>> {
         },
         _ => None
     }
-}
+}*/
 
 fn main() {
     let input = include_bytes!("../challenge.bin");
     let program = Program::new(input);
+
+    program.evaluate();
+
     /*if let Some(instructions) = parse_program(input) {
         /*for (i, instruction) in instructions.iter().enumerate() {
             println!("{} {:?}", i, instruction);
