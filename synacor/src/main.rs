@@ -12,6 +12,8 @@ use nom::{IResult, ErrorKind};
 use nom::Err::Position;
 use nom::IResult::*;
 
+use std::num::Wrapping as W;
+
 const REGISTER_COUNT: usize = 8;
 const MEMORY_BITS:    usize = 15;
 
@@ -108,24 +110,42 @@ impl Program {
         Program { state: State::new(memory) }
     }
 
-    fn evaluate(&self) {
+    fn step(&mut self) -> bool {
         if self.state.ip.is_none() {
-            return;
+            return false;
         }
 
-        let ip = self.state.ip.unwrap() as usize;
-        let current: &[u16] = &self.state.memory[ip..];
-        let current: &[u8] = unsafe { std::mem::transmute(current) };
+        let mut _opcodes = String::new();
+        let instr: Instruction;
+        let size: usize;
 
-        match instruction(&current) {
-            Done(_, parsed) => {
-                let () = parsed.s;
-                println!("{:?}", parsed);
-                parsed.apply(&mut self.state)
-            },
+        {
+            let ip = self.state.ip.unwrap() as usize;
+            let words: &[u16]  = &self.state.memory[ip..];
+            let current: &[u8] = unsafe { std::mem::transmute(words) };
 
-            _ => panic!("Cannot parse current instruction.")
+            match instruction(&current) {
+                Done(tail, parsed) => {
+                    instr = parsed;
+                    size = (current.len() - tail.len()) / 2;
+
+                    for i in 0..size {
+                        _opcodes.push_str(format!("{:04x} ",
+                            words[i]).as_str());
+                    }
+                },
+
+                _ => panic!("Cannot parse current instruction.")
+            }
         }
+
+        self.state.ip = self.state.ip.map(|ip| ip + size as u16);
+        if self.state.ip.is_none() {
+            panic!("Cannot compute on halted CPU.");
+        }
+
+        instr.apply(&mut self.state);
+        true
     }
 }
 
@@ -179,10 +199,8 @@ trait Semantics {
 #[derive(Debug, PartialEq)] pub struct CallSemantics { a: Operand }
 #[derive(Debug, PartialEq)] pub struct RetSemantics;
 
-// On Semantics::apply, state.ip already points to the following instruction.
-
 impl Semantics for NoopSemantics {
-    fn apply(&self, state: &mut State) {
+    fn apply(&self, _state: &mut State) {
     }
 }
 
@@ -215,7 +233,7 @@ impl Semantics for PopSemantics {
 
 impl Semantics for OutSemantics {
     fn apply(&self, state: &mut State) {
-        print!("{}", state.resolve_operand(&self.a));
+        print!("{}", (state.resolve_operand(&self.a) as u8) as char);
     }
 }
 
@@ -245,7 +263,6 @@ impl Semantics for EqSemantics {
         });
     }
 }
-
 
 impl Semantics for GtSemantics {
     fn apply(&self, state: &mut State) {
@@ -292,7 +309,7 @@ impl Semantics for AddSemantics {
         let b = state.resolve_operand(&self.b);
         let c = state.resolve_operand(&self.c);
 
-        state.set_operand(&self.a, normalize(b + c))
+        state.set_operand(&self.a, normalize((W(b) + W(c)).0))
     }
 }
 
@@ -301,7 +318,7 @@ impl Semantics for MultSemantics {
         let b = state.resolve_operand(&self.b);
         let c = state.resolve_operand(&self.c);
 
-        state.set_operand(&self.a, normalize(b * c))
+        state.set_operand(&self.a, normalize((W(b) * W(c)).0))
     }
 }
 
@@ -376,28 +393,59 @@ impl Semantics for RetSemantics {
 
 #[derive(Debug, PartialEq)]
 pub enum Instruction {
-    Halt { s: HaltSemantics },
-    Noop { s: NoopSemantics },
-    Set { s: SetSemantics },
-    Push { s: PushSemantics },
-    Pop { s: PopSemantics },
-    Out { s: OutSemantics },
-    In { s: InSemantics },
-    Eq_ { s: EqSemantics },
-    Gt { s: GtSemantics },
-    Jmp { s: JmpSemantics },
-    Jt { s: JtSemantics },
-    Jf { s: JfSemantics },
-    Add { s: AddSemantics },
-    Mult { s: MultSemantics },
-    Mod { s: ModSemantics },
-    And { s: AndSemantics },
-    Or { s: OrSemantics },
-    Not { s: NotSemantics },
-    Rmem { s: RmemSemantics },
-    Wmem { s: WmemSemantics },
-    Call { s: CallSemantics },
-    Ret { s: RetSemantics },
+    Halt(HaltSemantics),
+    Noop(NoopSemantics),
+    Set(SetSemantics),
+    Push(PushSemantics),
+    Pop(PopSemantics),
+    Out(OutSemantics),
+    In(InSemantics),
+    Eq_(EqSemantics),
+    Gt(GtSemantics),
+    Jmp(JmpSemantics),
+    Jt(JtSemantics),
+    Jf(JfSemantics),
+    Add(AddSemantics),
+    Mult(MultSemantics),
+    Mod(ModSemantics),
+    And(AndSemantics),
+    Or(OrSemantics),
+    Not(NotSemantics),
+    Rmem(RmemSemantics),
+    Wmem(WmemSemantics),
+    Call(CallSemantics),
+    Ret(RetSemantics),
+}
+
+impl Semantics for Instruction {
+    fn apply(&self, mut state: &mut State) {
+        use Instruction::*;
+
+        match *self {
+            Halt(ref semantics) => semantics.apply(state),
+            Noop(ref semantics) => semantics.apply(state),
+            Set(ref semantics)  => semantics.apply(state),
+            Push(ref semantics) => semantics.apply(state),
+            Pop(ref semantics)  => semantics.apply(state),
+            Out(ref semantics)  => semantics.apply(state),
+            In(ref semantics)   => semantics.apply(state),
+            Eq_(ref semantics)  => semantics.apply(state),
+            Gt(ref semantics)   => semantics.apply(state),
+            Jmp(ref semantics)  => semantics.apply(state),
+            Jt(ref semantics)   => semantics.apply(state),
+            Jf(ref semantics)   => semantics.apply(state),
+            Add(ref semantics)  => semantics.apply(state),
+            Mult(ref semantics) => semantics.apply(state),
+            Mod(ref semantics)  => semantics.apply(state),
+            And(ref semantics)  => semantics.apply(state),
+            Or(ref semantics)   => semantics.apply(state),
+            Not(ref semantics)  => semantics.apply(state),
+            Rmem(ref semantics) => semantics.apply(state),
+            Wmem(ref semantics) => semantics.apply(state),
+            Call(ref semantics) => semantics.apply(state),
+            Ret(ref semantics)  => semantics.apply(state),
+        }
+    }
 }
 
 named!(token<Word>, u16!(false));
@@ -429,21 +477,21 @@ pub fn operand(input: &[u8]) -> IResult<&[u8], Operand> {
 macro_rules! instruction_0(
     ($i: expr, $opcode: expr, $instruction: ident, $semantics: ident) => {
         chain!($i, apply!(opcode, $opcode), ||
-            Instruction::$instruction { s: $semantics })
+            Instruction::$instruction($semantics))
     }
 );
 
 macro_rules! instruction_1(
     ($i: expr, $opcode: expr, $instruction: ident, $semantics: ident) => {
         chain!($i, apply!(opcode, $opcode) ~ a: operand, ||
-            Instruction::$instruction { s: $semantics { a: a } })
+            Instruction::$instruction($semantics { a: a }))
     }
 );
 
 macro_rules! instruction_2(
     ($i: expr, $opcode: expr, $instruction: ident, $semantics: ident) => {
         chain!($i, apply!(opcode, $opcode) ~ a: operand ~ b: operand, ||
-            Instruction::$instruction { s: $semantics { a: a, b: b } })
+            Instruction::$instruction($semantics { a: a, b: b }))
     }
 );
 
@@ -451,7 +499,7 @@ macro_rules! instruction_3(
     ($i: expr, $opcode: expr, $instruction: ident, $semantics: ident) => {
         chain!($i, apply!(opcode, $opcode) ~ a: operand ~ b: operand ~
             c: operand,
-            || Instruction::$instruction { s: $semantics { a: a, b: b, c: c } })
+            || Instruction::$instruction($semantics { a: a, b: b, c: c }))
     }
 );
 
@@ -482,60 +530,12 @@ named!(pub instruction<Instruction>, alt!(
 
 named!(pub program_parser<Vec<Instruction> >, many0!(instruction));
 
-/*fn parser(input: &[u8]) -> Option<HashMap<usize, Instruction> > {
-    let mut result = HashMap::new();
-    let mut cursor = input;
-    let mut offset = 0;
-
-    while cursor.len() > 0 {
-        match instruction(cursor) {
-            Done(tail, current) => {
-                offset = input.len() - cursor.len();
-                println!("{} {} {:?}", offset, cursor.len(), current);
-                cursor = tail;
-
-                result.insert(offset, current);
-            },
-
-            _ => return None
-        }
-    }
-
-    Some(result)
-}
-
-fn parse_program(input: &[u8]) -> Option<Vec<Instruction>> {
-    match program_parser(input) {
-        Done(tail, result) => {
-            println!("{:x}", input.len() - tail.len());
-            for i in 0..100 {
-                print!("{:x} ", tail[i]);
-            }
-            Some(result)
-        },
-        _ => None
-    }
-}*/
-
 fn main() {
-    let input = include_bytes!("../challenge.bin");
-    let program = Program::new(input);
+    let input = include_bytes!("../../challenge/challenge.bin");
+    let mut program = Program::new(input);
 
-    program.evaluate();
-
-    /*if let Some(instructions) = parse_program(input) {
-        /*for (i, instruction) in instructions.iter().enumerate() {
-            println!("{} {:?}", i, instruction);
-        }*/
+    while program.step() {
     }
-
-    if let Some(instructions) = parser(input) {
-        for (offset, instruction) in &instructions {
-            println!("{} {:?}", offset, instructions);
-        }
-    } else {
-        println!("Cannot parse.");
-    }*/
 }
 
 #[cfg(test)]
@@ -588,4 +588,3 @@ mod tests {
         }
     }
 }
-
