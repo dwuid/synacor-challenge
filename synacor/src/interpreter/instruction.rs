@@ -1,0 +1,26 @@
+
+#[derive(Debug, PartialEq)]
+pub enum Instruction {
+    Halt(HaltSemantics),
+    Noop(NoopSemantics),
+    Set(SetSemantics),
+    Push(PushSemantics),
+    Pop(PopSemantics),
+    Out(OutSemantics),
+    In(InSemantics),
+    Eq_(EqSemantics),
+    Gt(GtSemantics),
+    Jmp(JmpSemantics),
+    Jt(JtSemantics),
+    Jf(JfSemantics),
+    Add(AddSemantics),
+    Mult(MultSemantics),
+    Mod(ModSemantics),
+    And(AndSemantics),
+    Or(OrSemantics),
+    Not(NotSemantics),
+    Rmem(RmemSemantics),
+    Wmem(WmemSemantics),
+    Call(CallSemantics),
+    Ret(RetSemantics),
+}
